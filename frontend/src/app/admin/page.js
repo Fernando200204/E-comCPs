@@ -1,147 +1,227 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
-export default function AdminMasivo() {
-    const [listaZapatos, setListaZapatos] = useState([]);
-    const [guardando, setGuardando] = useState(false);
-    const [catalogo, setCatalogo] = useState([]); // Memoria para los zapatos que ya están en la tienda
+export default function AdminPanel() {
+    const [zapatos, setZapatos] = useState([]);
+    const [nombre, setNombre] = useState('');
+    const [marca, setMarca] = useState('');
+    const [precio, setPrecio] = useState('');
+    const [tallas, setTallas] = useState('');
+    const [imagenes, setImagenes] = useState([]);
+    const [previews, setPreviews] = useState([]);
 
-    // Pedimos el catálogo actual al cargar la página
-    const cargarCatalogo = async () => {
-        const res = await fetch('http://localhost:3000/zapatos');
-        const data = await res.json();
-        setCatalogo(data);
-    };
+    // Estado para modal de edición
+    const [editando, setEditando] = useState(null);
+    const [editNombre, setEditNombre] = useState('');
+    const [editMarca, setEditMarca] = useState('');
+    const [editPrecio, setEditPrecio] = useState('');
+
+    const router = useRouter();
 
     useEffect(() => {
-        cargarCatalogo();
+        const usuario = JSON.parse(localStorage.getItem('usuario'));
+        if (!usuario || usuario.rol !== 'admin') {
+            router.push('/');
+            return;
+        }
+        cargarZapatos();
     }, []);
 
-    // Función para subir zapatos nuevos (la que ya teníamos)
-    const manejarFotos = (e) => {
-        const archivos = Array.from(e.target.files);
-        const nuevosZapatos = archivos.map((archivo) => ({
-            archivo: archivo, preview: URL.createObjectURL(archivo),
-            nombre: '', marca: '', precio: '', color: '', tallas: ''
-        }));
-        setListaZapatos([...listaZapatos, ...nuevosZapatos]);
+    const cargarZapatos = async () => {
+        const res = await fetch('http://localhost:3000/zapatos');
+        const data = await res.json();
+        setZapatos(data);
     };
 
-    const actualizarDato = (index, campo, valor) => {
-        const nuevaLista = [...listaZapatos];
-        nuevaLista[index][campo] = valor;
-        setListaZapatos(nuevaLista);
+    const manejarImagenes = (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length > 25) {
+            alert('Máximo 25 imágenes por producto.');
+            return;
+        }
+        setImagenes(files);
+        setPreviews(files.map(file => URL.createObjectURL(file)));
     };
 
-    const eliminarDeSeleccion = (indexAEliminar) => {
-        setListaZapatos(listaZapatos.filter((_, index) => index !== indexAEliminar));
-    };
-
-    const guardarTodo = async (e) => {
+    const guardarZapato = async (e) => {
         e.preventDefault();
-        setGuardando(true);
-        let cantidadSubidos = 0;
-
-        for (const zapato of listaZapatos) {
-            if (!zapato.nombre || !zapato.precio) continue;
-            const formData = new FormData();
-            formData.append('nombre', zapato.nombre);
-            formData.append('marca', zapato.marca);
-            formData.append('precio', zapato.precio);
-            formData.append('color', zapato.color);
-            formData.append('tallas', zapato.tallas);
-            formData.append('imagen', zapato.archivo);
-
-            const respuesta = await fetch('http://localhost:3000/zapatos', { method: 'POST', body: formData });
-            if (respuesta.ok) cantidadSubidos++;
+        if (imagenes.length === 0) {
+            alert('Selecciona al menos una imagen.');
+            return;
         }
 
-        alert(`¡Éxito! Se subieron ${cantidadSubidos} zapatos.`);
-        setListaZapatos([]);
-        document.getElementById('input-fotos').value = '';
-        setGuardando(false);
-        cargarCatalogo(); // Recargamos el catálogo de abajo para que muestre los nuevos inmediatamente
+        const formData = new FormData();
+        formData.append('nombre', nombre);
+        formData.append('marca', marca);
+        formData.append('precio', precio);
+
+        const arregloTallas = tallas.split(',').map(t => t.trim()).filter(t => t !== '');
+        formData.append('tallas', JSON.stringify(arregloTallas));
+        imagenes.forEach(img => formData.append('imagenes', img));
+
+        const res = await fetch('http://localhost:3000/zapatos', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (res.ok) {
+            alert('¡Producto guardado!');
+            setNombre(''); setMarca(''); setPrecio(''); setTallas(''); setImagenes([]); setPreviews([]);
+            cargarZapatos();
+        } else {
+            alert('Error al guardar.');
+        }
     };
 
-    // NUEVA FUNCIÓN: Eliminar definitivamente de la base de datos
-    const borrarDeLaTienda = async (id, nombre) => {
-        // Le preguntamos si está seguro para evitar accidentes
-        const confirmacion = window.confirm(`¿Estás 100% seguro de que quieres eliminar "${nombre}" de la tienda?`);
+    const abrirEdicion = (zapato) => {
+        setEditando(zapato.id);
+        setEditNombre(zapato.nombre);
+        setEditMarca(zapato.marca);
+        setEditPrecio(zapato.precio);
+    };
 
-        if (confirmacion) {
-            const respuesta = await fetch(`http://localhost:3000/zapatos/${id}`, {
-                method: 'DELETE'
-            });
+    const guardarEdicion = async (e) => {
+        e.preventDefault();
+        const res = await fetch(`http://localhost:3000/zapatos/${editando}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nombre: editNombre, marca: editMarca, precio: editPrecio })
+        });
 
-            if (respuesta.ok) {
-                cargarCatalogo(); // Actualizamos la lista visual
-            } else {
-                alert('Hubo un error al intentar borrar el zapato.');
-            }
+        if (res.ok) {
+            setEditando(null);
+            cargarZapatos();
+        } else {
+            alert('Error al actualizar.');
+        }
+    };
+
+    const eliminarZapato = async (id) => {
+        if (confirm('¿Eliminar este producto?')) {
+            await fetch(`http://localhost:3000/zapatos/${id}`, { method: 'DELETE' });
+            cargarZapatos();
         }
     };
 
     return (
-        <main className="p-8 font-sans max-w-5xl mx-auto bg-gray-50 min-h-screen rounded-xl">
-            <h1 className="text-3xl font-black mb-6 text-center text-gray-800">Panel de Control: CP Store</h1>
+        <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white p-8 font-sans">
+            <div className="max-w-6xl mx-auto">
+                <header className="flex justify-between items-center mb-10 border-b border-gray-800 pb-6">
+                    <div className="flex items-center gap-4">
+                        <img src="/logo.png" alt="CP Store" className="h-12 w-12 rounded-full border border-[#C5A059]" />
+                        <h1 className="text-3xl font-black text-[#C5A059]">Panel de Control</h1>
+                    </div>
+                    <button onClick={() => router.push('/')} className="bg-gray-800 text-gray-300 px-5 py-2 rounded-lg font-bold hover:bg-gray-700 transition border border-gray-700">
+                        Volver a la Tienda
+                    </button>
+                </header>
 
-            {/* SECCIÓN 1: SUBIR ZAPATOS */}
-            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm mb-10 text-center">
-                <label className="block text-gray-700 font-bold mb-4 text-lg">1. Subir Nuevos Zapatos</label>
-                <input id="input-fotos" type="file" accept="image/*" multiple onChange={manejarFotos} className="w-full max-w-sm mx-auto block file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-            </div>
-
-            {listaZapatos.length > 0 && (
-                <form onSubmit={guardarTodo} className="space-y-6 mb-12">
-                    <h2 className="text-xl font-bold text-gray-700 flex justify-between items-center">2. Completar Datos <span className="text-sm font-normal text-gray-500 bg-gray-200 px-3 py-1 rounded-full">{listaZapatos.length} seleccionados</span></h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {listaZapatos.map((zapato, index) => (
-                            <div key={index} className="relative flex gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
-                                <button type="button" onClick={() => eliminarDeSeleccion(index)} className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white w-7 h-7 rounded-full font-bold text-sm flex items-center justify-center shadow-md">✕</button>
-                                <img src={zapato.preview} alt="preview" className="w-24 h-24 object-cover rounded-lg border border-gray-300 shadow-sm" />
-                                <div className="flex-1 space-y-3">
-                                    <input type="text" placeholder="Nombre" required value={zapato.nombre} onChange={(e) => actualizarDato(index, 'nombre', e.target.value)} className="w-full border border-gray-300 p-1.5 rounded-lg text-sm" />
-                                    <div className="flex gap-2">
-                                        <input type="text" placeholder="Marca" required value={zapato.marca} onChange={(e) => actualizarDato(index, 'marca', e.target.value)} className="w-1/2 border border-gray-300 p-1.5 rounded-lg text-sm" />
-                                        <input type="number" step="0.01" placeholder="Precio" required value={zapato.precio} onChange={(e) => actualizarDato(index, 'precio', e.target.value)} className="w-1/2 border border-gray-300 p-1.5 rounded-lg text-sm" />
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <input type="text" placeholder="Color" required value={zapato.color} onChange={(e) => actualizarDato(index, 'color', e.target.value)} className="w-1/3 border border-gray-300 p-1.5 rounded-lg text-sm" />
-                                        <input type="text" placeholder="Tallas (Ej: 38, 39)" required value={zapato.tallas} onChange={(e) => actualizarDato(index, 'tallas', e.target.value)} className="w-2/3 border border-gray-300 p-1.5 rounded-lg text-sm" />
-                                    </div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                    <div className="bg-gray-800/50 p-6 rounded-2xl border border-gray-700 shadow-xl backdrop-blur-sm h-fit">
+                        <h2 className="text-xl font-bold mb-6 text-white border-b border-gray-700 pb-2">Agregar Nuevo Zapato</h2>
+                        <form onSubmit={guardarZapato} className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Nombre Descriptivo</label>
+                                <input type="text" placeholder="Ej: Samba" value={nombre} onChange={(e) => setNombre(e.target.value)} required className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:border-[#C5A059] outline-none" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Marca</label>
+                                    <input type="text" placeholder="Ej: Adidas" value={marca} onChange={(e) => setMarca(e.target.value)} required className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:border-[#C5A059] outline-none" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Precio (COP)</label>
+                                    <input type="number" placeholder="Ej: 160000" value={precio} onChange={(e) => setPrecio(e.target.value)} required className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:border-[#C5A059] outline-none" />
                                 </div>
                             </div>
-                        ))}
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Tallas (Separadas por coma)</label>
+                                <input type="text" placeholder="Ej: 35, 36, 37, 38, 39" value={tallas} onChange={(e) => setTallas(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white focus:border-[#C5A059] outline-none" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Fotos / Variantes</label>
+                                <input type="file" onChange={manejarImagenes} accept="image/*" multiple required className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-bold file:bg-[#C5A059] file:text-black hover:file:bg-[#B5952F] cursor-pointer" />
+                            </div>
+                            {previews.length > 0 && (
+                                <div className="flex gap-2 overflow-x-auto pb-2">
+                                    {previews.map((prev, i) => (
+                                        <img key={i} src={prev} alt="" className="h-16 w-16 object-cover rounded-lg border border-[#C5A059] flex-shrink-0" />
+                                    ))}
+                                </div>
+                            )}
+                            <button type="submit" className="w-full bg-[#C5A059] text-black font-black py-3 rounded-xl hover:bg-[#B5952F] transition shadow-lg mt-4">
+                                Guardar Producto
+                            </button>
+                        </form>
                     </div>
-                    <button type="submit" disabled={guardando} className={`mt-4 w-full text-white py-3 rounded-lg font-bold text-lg transition ${guardando ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700 shadow-lg'}`}>{guardando ? 'Guardando...' : `Guardar ${listaZapatos.length} zapatos en la Tienda`}</button>
-                </form>
-            )}
 
-            <hr className="my-10 border-gray-300" />
-
-            {/* SECCIÓN 2: CATÁLOGO ACTUAL PARA BORRAR */}
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">Gestión del Catálogo Actual</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                {catalogo.map((zapato) => (
-                    <div key={zapato.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-col items-center text-center">
-                        {zapato.imagen_url ? (
-                            <img src={zapato.imagen_url} alt={zapato.nombre} className="w-full h-32 object-cover rounded-lg mb-3 bg-gray-100" />
-                        ) : (
-                            <div className="w-full h-32 bg-gray-100 rounded-lg mb-3 flex items-center justify-center text-gray-400 text-xs">Sin foto</div>
-                        )}
-                        <h3 className="font-bold text-sm text-gray-800 line-clamp-1">{zapato.nombre}</h3>
-                        <p className="text-green-600 font-black text-sm mb-4">${zapato.precio}</p>
-
-                        <button
-                            onClick={() => borrarDeLaTienda(zapato.id, zapato.nombre)}
-                            className="mt-auto w-full bg-red-100 text-red-600 hover:bg-red-600 hover:text-white py-1.5 rounded-lg font-bold text-sm transition"
-                        >
-                            Eliminar
-                        </button>
+                    <div className="lg:col-span-2 bg-gray-800/50 p-6 rounded-2xl border border-gray-700 shadow-xl backdrop-blur-sm">
+                        <h2 className="text-xl font-bold mb-6 text-white border-b border-gray-700 pb-2">Inventario ({zapatos.length})</h2>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="text-gray-400 text-sm uppercase tracking-wider border-b border-gray-700">
+                                        <th className="pb-3 pl-2">Foto</th>
+                                        <th className="pb-3">Nombre</th>
+                                        <th className="pb-3">Marca</th>
+                                        <th className="pb-3">Precio</th>
+                                        <th className="pb-3 text-right pr-2">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {zapatos.map(zapato => (
+                                        <tr key={zapato.id} className="border-b border-gray-700/50 hover:bg-gray-700/30 transition">
+                                            <td className="py-3 pl-2">
+                                                <img src={zapato.imagenes && zapato.imagenes.length > 0 ? zapato.imagenes[0] : zapato.imagen_url} className="w-12 h-12 object-cover rounded-md border border-gray-600" />
+                                            </td>
+                                            <td className="py-3 font-bold text-white">{zapato.nombre}</td>
+                                            <td className="py-3 text-gray-300">{zapato.marca}</td>
+                                            <td className="py-3 font-black text-[#C5A059]">${Number(zapato.precio).toLocaleString('es-CO')}</td>
+                                            <td className="py-3 text-right pr-2 space-x-2">
+                                                <button onClick={() => abrirEdicion(zapato)} className="bg-[#C5A059]/20 text-[#C5A059] px-3 py-1 rounded hover:bg-[#C5A059] hover:text-black transition font-bold text-sm border border-[#C5A059]/40">
+                                                    Editar
+                                                </button>
+                                                <button onClick={() => eliminarZapato(zapato.id)} className="bg-red-500/10 text-red-400 px-3 py-1 rounded hover:bg-red-500 hover:text-white transition font-bold text-sm border border-red-500/20">
+                                                    Eliminar
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                ))}
+                </div>
+
+                {/* MODAL PARA ACTUALIZAR PRECIO */}
+                {editando && (
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-gray-900 border border-gray-700 p-6 rounded-2xl w-full max-w-md shadow-2xl">
+                            <h3 className="text-xl font-bold text-[#C5A059] mb-4">Modificar Datos de Producto</h3>
+                            <form onSubmit={guardarEdicion} className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Nombre</label>
+                                    <input type="text" value={editNombre} onChange={(e) => setEditNombre(e.target.value)} required className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 text-white outline-none focus:border-[#C5A059]" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Marca</label>
+                                    <input type="text" value={editMarca} onChange={(e) => setEditMarca(e.target.value)} required className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 text-white outline-none focus:border-[#C5A059]" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Precio (COP sin puntos)</label>
+                                    <input type="number" value={editPrecio} onChange={(e) => setEditPrecio(e.target.value)} required className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 text-white outline-none focus:border-[#C5A059]" />
+                                </div>
+                                <div className="flex justify-end gap-3 pt-4 border-t border-gray-800">
+                                    <button type="button" onClick={() => setEditando(null)} className="px-4 py-2 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 font-bold text-sm">Cancelar</button>
+                                    <button type="submit" className="px-5 py-2 bg-[#C5A059] text-black rounded-lg hover:bg-[#B5952F] font-black text-sm">Guardar Cambios</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
             </div>
-        </main>
+        </div>
     );
 }

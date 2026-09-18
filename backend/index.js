@@ -46,119 +46,114 @@ app.get('/actualizar-bd', async (req, res) => {
     }
 });
 
-// Ruta para crear la tabla de usuarios si no existe
-app.get('/crear-tabla-usuarios', async (request, response) => {
+// ==========================================
+// 2. RUTA POST: GUARDA EL ZAPATO CON TODAS SUS FOTOS
+// ==========================================
+// ==========================================
+// 2. RUTA POST: GUARDA EL ZAPATO CON TODAS SUS FOTOS
+// ==========================================
+app.post('/zapatos', upload.array('imagenes', 25), async (req, res) => {
     try {
-        await pool.query(`
-      CREATE TABLE IF NOT EXISTS usuarios (
-        id SERIAL PRIMARY KEY,
-        nombre VARCHAR(100) NOT NULL,
-        correo VARCHAR(150) UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        rol VARCHAR(20) DEFAULT 'cliente' -- Puede ser 'cliente' o 'admin'
-      );
-    `);
-        response.send('¡Tabla de usuarios creada con éxito en la base de datos!');
-    } catch (error) {
-        console.error(error);
-        response.status(500).send('Hubo un error al crear la tabla de usuarios.');
-    }
-});
+        const { nombre, marca, precio, tallas } = req.body;
 
-// RUTA TEMPORAL PARA CREAR UN ADMIN
-app.get('/crear-admin-maestro', async (req, res) => {
-    try {
-        const salt = await bcrypt.genSalt(10);
-        // Cambia el correo y la contraseña por los que prefieras para tu amigo
-        const passwordHash = await bcrypt.hash('admin123', salt);
+        let imagen_url = null;
+        let arregloImagenes = [];
 
-        await pool.query(`
-      INSERT INTO usuarios (nombre, correo, password, rol) 
-      VALUES ('Administrador CP', 'admin@cpstore.com', $1, 'admin')
-      ON CONFLICT (correo) DO NOTHING;
-    `, [passwordHash]);
+        // Atrapamos todas las fotos que subiste desde el panel
+        if (req.files && req.files.length > 0) {
+            arregloImagenes = req.files.map(file => `http://localhost:3000/uploads/${file.filename}`);
+            imagen_url = arregloImagenes[0]; // La primera foto queda como la principal
+        }
 
-        res.send('¡Administrador creado con éxito! Correo: admin@cpstore.com / Contraseña: admin123');
-    } catch (error) {
-        console.error(error);
-        res.status(500).send('Error al crear el admin.');
-    }
-});
-
-// Ruta para ver la lista de todos los zapatos CON su inventario
-app.get('/zapatos', async (req, res) => {
-    try {
-        // Buscamos los zapatos y, al mismo tiempo, buscamos sus tallas y colores en la otra tabla
-        const resultado = await pool.query(`
-      SELECT 
-        z.*,
-        ARRAY(SELECT DISTINCT talla FROM inventario WHERE zapato_id = z.id) as tallas,
-        ARRAY(SELECT DISTINCT color FROM inventario WHERE zapato_id = z.id) as colores
-      FROM zapatos z
-      ORDER BY z.id DESC; -- Esto ordena para que los zapatos más nuevos salgan de primero
-    `);
-        res.json(resultado.rows);
-    } catch (error) {
-        console.error(error);
-        res.status(500).send('Error al obtener zapatos');
-    }
-});
-
-// NUEVA RUTA POST: Guarda el zapato y también su inventario
-app.post('/zapatos', upload.single('imagen'), async (req, res) => {
-    try {
-        // 1. Recibimos los datos del zapato y los nuevos datos de inventario
-        const { nombre, marca, precio, color, tallas } = req.body;
-        const imagen_url = req.file ? `http://localhost:3000/uploads/${req.file.filename}` : null;
-
-        // 2. Guardamos el zapato y usamos RETURNING id para saber qué número de identificación le dio la base de datos
+        // Guardamos el zapato en la base de datos (con la galería de fotos en formato JSON)
         const resultadoZapato = await pool.query(`
-      INSERT INTO zapatos (nombre, marca, precio, imagen_url) 
-      VALUES ($1, $2, $3, $4) RETURNING id
-    `, [nombre, marca, precio, imagen_url]);
+            INSERT INTO zapatos (nombre, marca, precio, imagen_url, imagenes) 
+            VALUES ($1, $2, $3, $4, $5) RETURNING id
+        `, [nombre, marca, precio, imagen_url, JSON.stringify(arregloImagenes)]);
 
-        const zapatoId = resultadoZapato.rows[0].id; // ¡Atrapamos el ID nuevo!
+        const zapatoId = resultadoZapato.rows[0].id;
 
-        // 3. Si tu amigo escribió tallas, las desmenuzamos y las guardamos
-        if (tallas && color) {
-            const listaTallas = tallas.split(','); // Convierte "38, 39" en una lista [38, 39]
-
+        // Guardamos todas las tallas que escribiste
+        if (tallas) {
+            const listaTallas = JSON.parse(tallas);
             for (let i = 0; i < listaTallas.length; i++) {
-                const tallaLimpia = listaTallas[i].trim(); // Limpiamos espacios accidentales
-
-                // Guardamos cada talla en la tabla inventario. Asumimos 10 pares por talla para arrancar.
+                const tallaLimpia = listaTallas[i];
                 await pool.query(`
-          INSERT INTO inventario (zapato_id, talla, color, cantidad) 
-          VALUES ($1, $2, $3, $4)
-        `, [zapatoId, tallaLimpia, color, 10]);
+                    INSERT INTO inventario (zapato_id, talla, color, cantidad) 
+                    VALUES ($1, $2, $3, $4)
+                `, [zapatoId, tallaLimpia, 'Único', 10]);
             }
         }
 
-        res.send({ mensaje: '¡Zapato y su inventario guardados con éxito!' });
+        res.send({ mensaje: '¡Zapato y galería guardados con éxito!' });
     } catch (error) {
+        // ESTO NOS DIRÁ EXACTAMENTE QUÉ ESTÁ FALLANDO
+        console.error('====================================');
+        console.error('❌ ERROR GRAVE AL GUARDAR EL ZAPATO:');
         console.error(error);
-        res.status(500).send({ error: 'Hubo un error al guardar.' });
+        console.error('====================================');
+        res.status(500).send({ error: 'Hubo un error al guardar.', detalle: error.message });
     }
 });
 
-// NUEVA RUTA DELETE: Para eliminar un zapato definitivamente
+// ==========================================
+// 3. RUTA GET: ENVIAR EL INVENTARIO A LA PÁGINA (¡La que faltaba!)
+// ==========================================
+app.get('/zapatos', async (req, res) => {
+    try {
+        const resultado = await pool.query('SELECT * FROM zapatos ORDER BY id DESC');
+
+        // Buscamos las tallas de cada zapato para mandarlas completas
+        const zapatosConTallas = await Promise.all(resultado.rows.map(async (zapato) => {
+            const inventarioRes = await pool.query('SELECT talla FROM inventario WHERE zapato_id = $1', [zapato.id]);
+            const tallas = inventarioRes.rows.map(row => row.talla);
+            return { ...zapato, tallas };
+        }));
+
+        res.json(zapatosConTallas);
+    } catch (error) {
+        console.error('Error al obtener los zapatos:', error);
+        res.status(500).json({ error: 'Hubo un error al obtener los datos.' });
+    }
+});
+
+// ==========================================
+// 4. RUTA DELETE: ELIMINAR UN ZAPATO DESDE EL PANEL
+// ==========================================
 app.delete('/zapatos/:id', async (req, res) => {
     try {
-        const zapatoId = req.params.id; // Atrapamos el número de ID que queremos borrar
+        const zapatoId = req.params.id;
 
-        // 1. Primero quemamos el inventario asociado (las tallas y colores)
-        await pool.query('DELETE FROM inventario WHERE zapato_id = $1', [zapatoId]);
-
-        // 2. Luego borramos el zapato principal de la vitrina
+        // Al borrar el zapato, el 'ON DELETE CASCADE' de la BD borra su inventario automáticamente
         await pool.query('DELETE FROM zapatos WHERE id = $1', [zapatoId]);
 
-        res.send({ mensaje: '¡Zapato eliminado para siempre!' });
+        res.json({ mensaje: '¡Zapato y tallas eliminados para siempre!' });
     } catch (error) {
-        console.error(error);
-        res.status(500).send({ error: 'Hubo un error al eliminar el zapato.' });
+        console.error('Error al eliminar:', error);
+        res.status(500).json({ error: 'Hubo un error al eliminar el zapato.' });
     }
 });
 
+// ==========================================
+// RUTA PUT: EDITAR PRODUCTO (PRECIO, NOMBRE, MARCA)
+// ==========================================
+app.put('/zapatos/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { nombre, marca, precio } = req.body;
+
+        await pool.query(`
+            UPDATE zapatos 
+            SET nombre = $1, marca = $2, precio = $3 
+            WHERE id = $4
+        `, [nombre, marca, precio, id]);
+
+        res.json({ mensaje: 'Producto actualizado con éxito' });
+    } catch (error) {
+        console.error('Error al actualizar zapato:', error);
+        res.status(500).json({ error: 'Hubo un error al actualizar.' });
+    }
+});
 // Configuración del mensajero de correos (Gmail)
 const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -291,6 +286,60 @@ app.get('/descongelar-admin', async (req, res) => {
         res.status(500).send('Error');
     }
 });
+
+// ==========================================
+// 1. AUTO-CREADOR DE TABLAS E INVENTARIO
+// ==========================================
+const inicializarBaseDeDatos = async () => {
+    try {
+        await pool.query(`
+      CREATE TABLE IF NOT EXISTS usuarios (
+        id SERIAL PRIMARY KEY,
+        nombre VARCHAR(255),
+        correo VARCHAR(255) UNIQUE NOT NULL, 
+        password VARCHAR(255) NOT NULL,
+        rol VARCHAR(50) DEFAULT 'cliente',
+        verificado BOOLEAN DEFAULT false,
+        codigo_verificacion VARCHAR(10)
+      );
+
+      CREATE TABLE IF NOT EXISTS zapatos (
+        id SERIAL PRIMARY KEY,
+        nombre VARCHAR(255) NOT NULL,
+        marca VARCHAR(255) NOT NULL,
+        precio DECIMAL(10, 2) NOT NULL,
+        imagen_url TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS inventario (
+        id SERIAL PRIMARY KEY,
+        zapato_id INTEGER REFERENCES zapatos(id) ON DELETE CASCADE,
+        talla VARCHAR(50) NOT NULL,
+        color VARCHAR(50) DEFAULT 'Único',
+        cantidad INTEGER DEFAULT 0
+      );
+    `);
+
+        // Curita automática: Si la tabla se creó con "email", la renombramos a "correo"
+        try {
+            await pool.query(`ALTER TABLE usuarios RENAME COLUMN email TO correo;`);
+            console.log('🔧 Corrección aplicada: Columna email cambiada a correo.');
+        } catch (e) {
+            // Si da error es porque ya se llama correo, lo ignoramos en silencio
+        }
+
+        // Agrega la columna de la galería de fotos si aún no existe
+        await pool.query(`ALTER TABLE zapatos ADD COLUMN IF NOT EXISTS imagenes JSON DEFAULT '[]'::json;`);
+
+        await pool.query(`UPDATE usuarios SET rol = 'admin' WHERE correo = 'admin@cpstore.com'`);
+
+        console.log('✅ Base de datos verificada y lista.');
+    } catch (error) {
+        console.error('❌ Error al inicializar la base de datos:', error);
+    }
+};
+
+inicializarBaseDeDatos();
 
 const PORT = 3000;
 app.listen(PORT, () => {
