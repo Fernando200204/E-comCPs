@@ -49,35 +49,31 @@ app.get('/actualizar-bd', async (req, res) => {
 // ==========================================
 // 2. RUTA POST: GUARDA EL ZAPATO CON TODAS SUS FOTOS
 // ==========================================
-// ==========================================
-// 2. RUTA POST: GUARDA EL ZAPATO CON TODAS SUS FOTOS
-// ==========================================
 app.post('/zapatos', upload.array('imagenes', 25), async (req, res) => {
     try {
         const { nombre, marca, precio, tallas } = req.body;
 
-        let imagen_url = null;
+        let imagenUrl = null;
         let arregloImagenes = [];
 
         // Atrapamos todas las fotos que subiste desde el panel
         if (req.files && req.files.length > 0) {
             arregloImagenes = req.files.map(file => `http://localhost:3000/uploads/${file.filename}`);
-            imagen_url = arregloImagenes[0]; // La primera foto queda como la principal
+            imagenUrl = arregloImagenes[0]; // La primera foto queda como la principal
         }
 
         // Guardamos el zapato en la base de datos (con la galería de fotos en formato JSON)
         const resultadoZapato = await pool.query(`
             INSERT INTO zapatos (nombre, marca, precio, imagen_url, imagenes) 
             VALUES ($1, $2, $3, $4, $5) RETURNING id
-        `, [nombre, marca, precio, imagen_url, JSON.stringify(arregloImagenes)]);
+        `, [nombre, marca, precio, imagenUrl, JSON.stringify(arregloImagenes)]);
 
         const zapatoId = resultadoZapato.rows[0].id;
 
         // Guardamos todas las tallas que escribiste
         if (tallas) {
             const listaTallas = JSON.parse(tallas);
-            for (let i = 0; i < listaTallas.length; i++) {
-                const tallaLimpia = listaTallas[i];
+            for (const tallaLimpia of listaTallas) {
                 await pool.query(`
                     INSERT INTO inventario (zapato_id, talla, color, cantidad) 
                     VALUES ($1, $2, $3, $4)

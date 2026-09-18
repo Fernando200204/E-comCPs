@@ -41,6 +41,10 @@ export default function AdminPanel() {
             alert('Máximo 25 imágenes por producto.');
             return;
         }
+        
+        // Evitar fuga de memoria liberando URLs previas
+        previews.forEach(prev => URL.revokeObjectURL(prev));
+        
         setImagenes(files);
         setPreviews(files.map(file => URL.createObjectURL(file)));
     };
@@ -68,7 +72,9 @@ export default function AdminPanel() {
 
         if (res.ok) {
             alert('¡Producto guardado!');
-            setNombre(''); setMarca(''); setPrecio(''); setTallas(''); setImagenes([]); setPreviews([]);
+            setNombre(''); setMarca(''); setPrecio(''); setTallas(''); setImagenes([]); 
+            previews.forEach(prev => URL.revokeObjectURL(prev)); // Liberar memoria
+            setPreviews([]);
             cargarZapatos();
         } else {
             alert('Error al guardar.');
